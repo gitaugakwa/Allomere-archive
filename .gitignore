@@ -1,0 +1,13 @@
+
+# Python
+venv
+
+# Audio
+*.mp3
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Others
+model.*
+simple_audio.*
