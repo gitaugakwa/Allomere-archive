@@ -4,6 +4,7 @@ venv
 
 # Audio
 *.mp3
+*.part
 
 # Jupyter Notebook
 .ipynb_checkpoints

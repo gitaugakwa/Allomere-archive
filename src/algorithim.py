@@ -1,6 +1,7 @@
 from __future__ import unicode_literals
 # from tensorflow_io.python.api.audio import AudioIOTensor
 import tensorflow as tf
+import tensorflow_io as tfio
 import argparse
 
 from pynput.keyboard import Key, Listener,GlobalHotKeys,KeyCode
@@ -49,14 +50,44 @@ def get_waveform(file_path):
 	return audio, sr
 
 
+async def get_mel_spectrogram(waveform, pad: bool = True, input_samples= DURATION * SAMPLE_RATE, frame_step = 128, frame_length=255 ):
+  # Zero-padding for an audio waveform with less than 16,000 samples.
+  channels = waveform.shape[1]
+  input_len = input_samples
+  waveform = waveform[:input_len]
+  
+  # Cast the waveform tensors' dtype to float32.
+  waveform = tf.cast(waveform, dtype=tf.float32)
+  # Concatenate the waveform with `zero_padding`, which ensures all audio
+  # clips are of the same length.
+  tfio.audio.melscale()
+  spectrogram = []
+  for channel in range(channels):
+    data = waveform[:-1,channel]
+    if pad:
+        zero_padding = tf.zeros(
+            input_samples - waveform.shape[0],
+            dtype=tf.float32)
+        data = tf.concat([waveform[:,channel], zero_padding], 0)
+    # Convert the waveform to a spectrogram via a STFT.
+    spectrogram.append(tf.signal.stft(
+        data, frame_length=frame_length, frame_step=frame_step))
+    # Obtain the magnitude of the STFT.
+    spectrogram[channel] = tf.abs(spectrogram[channel])
+    spectrogram[channel] = spectrogram[channel][..., tf.newaxis]
+    # Add a `channels` dimension, so that the spectrogram can be used
+    # as image-like input data with convolution layers (which expect
+    # shape (`batch_size`, `height`, `width`, `channels`).
+    # spectrogram = spectrogram[..., tf.newaxis]
+	# shape ('width', 'batch_size', 'height')
+  return tf.concat(spectrogram, axis=2)
+
 async def get_spectrogram(waveform, pad: bool = True, input_samples= DURATION * SAMPLE_RATE, frame_step = 128, frame_length=255 ):
   # Zero-padding for an audio waveform with less than 16,000 samples.
   channels = waveform.shape[1]
   input_len = input_samples
   waveform = waveform[:input_len]
-  zero_padding = tf.zeros(
-      input_samples - waveform.shape[0],
-      dtype=tf.float32)
+  
   # Cast the waveform tensors' dtype to float32.
   waveform = tf.cast(waveform, dtype=tf.float32)
   # Concatenate the waveform with `zero_padding`, which ensures all audio
@@ -65,6 +96,9 @@ async def get_spectrogram(waveform, pad: bool = True, input_samples= DURATION * 
   for channel in range(channels):
     data = waveform[:-1,channel]
     if pad:
+        zero_padding = tf.zeros(
+            input_samples - waveform.shape[0],
+            dtype=tf.float32)
         data = tf.concat([waveform[:,channel], zero_padding], 0)
     # Convert the waveform to a spectrogram via a STFT.
     spectrogram.append(tf.signal.stft(
@@ -87,13 +121,107 @@ async def get_beat_track(waveform, sr):
 	_, beat_track = librosa.beat.beat_track(y=librosa.to_mono(waveform), sr=sr, tightness=1, hop_length=256, trim=False, units="samples")
 	# print(beat_track.shape)
 
-	time_stamps =librosa.samples_to_time(beat_track, sr=sr)
+	# time_stamps =librosa.samples_to_time(beat_track, sr=sr)
 
 	# print(np.array(beat_track).reshape((-1,1)).shape)
 	# print(beat_track)
 	# print(time_stamps)
 	# print(tempo)
 	return beat_track, tempo
+async def get_cross_similarity_mat(waveform, sr):
+	get_beat_track_r = get_beat_track(waveform, sr)
+	def previous_and_next(some_iterable):
+		prevs, items, nexts = tee(some_iterable, 3)
+		prevs = chain([None], prevs)
+		nexts = chain(islice(nexts, 1, None), [None])
+		return zip(prevs, items, nexts)
+
+	def mse(A,B):
+		mean = (np.squeeze(A - B)**2).mean()
+		# print(mean)
+		return mean
+	vmse = np.vectorize(mse, signature='(m),(m)->()')
+	def matmse(A,B):
+		return vmse(A,B).reshape(-1,1)
+	vmatmse = np.vectorize(matmse, signature='(m),(n,m)->(n,1)')
+
+	beat_track, tempo = await get_beat_track_r
+	beats = beat_track.shape[0]
+	csm_mat = np.zeros((beats, beats))
+	for a, (a_sample_start, a_sample_end, _) in enumerate(previous_and_next(beat_track)):
+		print(a)
+		for b, (b_sample_start, b_sample_end, _) in enumerate(previous_and_next(beat_track[a+1:])):
+			csm_mat[a, b+1] = np.mean(librosa.segment.cross_similarity(waveform[:,a_sample_start:a_sample_end], waveform[:,b_sample_start:b_sample_end], k=2))
+	# beat_samples = np.array([np.mean(librosa.segment.cross_similarity(waveform[:,p_sample:sample], waveform[:,sample:n_sample]), axis=0) for p_sample, sample, n_sample in previous_and_next(beat_track)])
+
+	# mse_arrays = [np.concatenate([np.zeros((i,1)),beat_samples[i,:,1],beat_samples[i:,:,1]]) for i in range(beats)]
+	return csm_mat.T, beat_track, tempo
+
+
+async def get_cosine_sim_mat_improved(waveform, sr, padding=5000):
+	get_beat_track_r = get_beat_track(waveform, sr)
+
+	def previous_and_next(some_iterable):
+		prevs, items, nexts = tee(some_iterable, 3)
+		prevs = chain([None], prevs)
+		nexts = chain(islice(nexts, 1, None), [None])
+		return zip(prevs, items, nexts)
+	
+	def cosine_sim(A,B):
+		similarity = (1- (np.dot(A, B)/(np.linalg.norm(A)*np.linalg.norm(B)))).mean()
+		# mean = (np.squeeze(A - B)**2).mean()
+		# print(mean)
+		return similarity
+	vcosine_sim = np.vectorize(cosine_sim, signature='(m),(m)->()')
+	def matcosine_sim(A,B):
+		return vcosine_sim(A,B).reshape(-1,1)
+	vmatcosine_sim = np.vectorize(matcosine_sim, signature='(m),(n,m)->(n,1)')
+
+
+	beat_track, tempo = await get_beat_track_r
+	beats = beat_track.shape[0]
+	samples = waveform.shape[1]
+	beat_samples = np.array([np.mean(await get_spectrogram(waveform[:,max(sample-padding, 0):min(sample+padding, samples)].T, pad=False), axis=0) for _, sample, _ in previous_and_next(beat_track)])
+	# print(beat_samples.shape)
+
+	cosine_sim_arrays = [np.concatenate([np.zeros((i,1)),vmatcosine_sim(beat_samples[i,:,1],beat_samples[i:,:,1])]) for i in range(beats)]
+
+	cosine_sim_mat = np.column_stack(cosine_sim_arrays)
+	# print(cosine_sim_mat.shape)
+	return cosine_sim_mat,beat_track, tempo
+
+
+async def get_mse_mat_improved(waveform, sr, padding=5000):
+	get_beat_track_r = get_beat_track(waveform, sr)
+
+	def previous_and_next(some_iterable):
+		prevs, items, nexts = tee(some_iterable, 3)
+		prevs = chain([None], prevs)
+		nexts = chain(islice(nexts, 1, None), [None])
+		return zip(prevs, items, nexts)
+	
+	def mse(A,B):
+		mean = (np.squeeze(A - B)**2).mean()
+		# print(mean)
+		return mean
+	vmse = np.vectorize(mse, signature='(m),(m)->()')
+	def matmse(A,B):
+		return vmse(A,B).reshape(-1,1)
+	vmatmse = np.vectorize(matmse, signature='(m),(n,m)->(n,1)')
+
+
+	beat_track, tempo = await get_beat_track_r
+	beats = beat_track.shape[0]
+	samples = waveform.shape[1]
+	beat_samples = np.array([np.mean(await get_spectrogram(waveform[:,max(sample-padding, 0):min(sample+padding, samples)].T, pad=False), axis=0) for _, sample, _ in previous_and_next(beat_track)])
+	# print(beat_samples.shape)
+
+	mse_arrays = [np.concatenate([np.zeros((i,1)),vmatmse(beat_samples[i,:,1],beat_samples[i:,:,1])]) for i in range(beats)]
+
+	mse_mat = np.column_stack(mse_arrays)
+	# print(mse_mat.shape)
+	return mse_mat,beat_track, tempo
+
 
 async def get_mse_mat(waveform, sr):
 	get_beat_track_r = get_beat_track(waveform, sr)
@@ -267,17 +395,16 @@ def audio_loop(gen, sr, branches):
 	# return stream,audio_thread
 	return stream
 
-async def play_song(args):
-	waveform, sr = get_waveform(args.path)
-	mse_mat, beat_track,tempo=await get_mse_mat(waveform,sr)
-
+async def get_beats_map(waveform, sr, padding, quality, quantity, gap ):
+	# mse_mat, beat_track,tempo=await get_cross_similarity_mat(waveform,sr)
+	# mse_mat, beat_track,tempo=await get_mse_mat_improved(waveform,sr)
+	mse_mat, beat_track,tempo=await get_cosine_sim_mat_improved(waveform,sr, padding)
+	# mse_mat, beat_track,tempo=await get_mse_mat_improved(waveform,sr, padding)
 	beats = beat_track.shape[0]
-	gap = args.gap
-	quality = args.quality
-	quantity = args.quantity
 
 	source_beat = np.tile(np.arange(beats), (beats, 1)).T
 	end_beat = np.tile(np.arange(beats), (beats, 1))
+
 	beat_to_beat_mse = np.stack([source_beat, mse_mat, end_beat], axis=2)
 	beat_to_beat_map = beat_to_beat_mse[beat_to_beat_mse[:,:, 1] > 0]
 	beat_to_beat_map_sorted = beat_to_beat_map[beat_to_beat_map[:, 1].argsort()]
@@ -285,21 +412,45 @@ async def play_song(args):
 	# best_match_map_long = beat_to_beat_map_sorted[(beat_to_beat_map_sorted[:, 0] - beat_to_beat_map_sorted[:, 2]) > gap]
 	best_match_map_filtered = beat_to_beat_map_sorted[(beat_to_beat_map_sorted[:, 0] -beat_to_beat_map_sorted[:, 2]) > gap]
 
+	# best_match_map_filtered = best_match_map_filtered[((best_match_map_filtered[:, 1] /best_match_map_filtered[-1, 1]) * 100) <= (100-quality)]
 	best_match_map_filtered = best_match_map_filtered[:int(best_match_map_filtered.shape[0] * (min(max(100-quality, 1e-4), 99.9999)/100)), :]
 	if(quantity):
+		# print(best_match_map_filtered.shape)
 		best_match_map_filtered = best_match_map_filtered[:quantity, :]
+	
+	return beat_track,best_match_map_filtered
 
-	print(best_match_map_filtered.shape)
+
+async def play_song(args):
+	gap = args.gap
+	quality = args.quality
+	quantity = args.quantity
+	padding = args.padding
+
+	waveform, sr = get_waveform(args.path)
+	
+	beat_track, beat_map = await get_beats_map(waveform, sr, padding, quality, quantity, gap)
+
+	print(f"Samples:\t{waveform.shape[1]}")
+	print(f"SampleRate:\t{sr}")
+	print(f"Beats:\t\t{beat_track.shape[0]}")
+	print(f"Padding:\t{padding}")
+	print(f"Quality:\t{quality}")
+	print(f"Quantity:\t{quantity}")
+	print(f"Gap:\t\t{gap}")
+
+	# beats = beat_track.shape[0]
+
+	print(beat_map)
+	print(beat_map.shape)
 	output = True
 	
-	gen = audioGenerator(waveform, beat_track, best_match_map_filtered, output)
+	gen = audioGenerator(waveform, beat_track, beat_map, output)
 	# audio_thread = Thread(target=audio_loop, args=(gen,sr,))
 	# audio_thread.start()
-	stream = audio_loop(gen,sr, best_match_map_filtered)
+	stream = audio_loop(gen,sr, beat_map)
 	# audio_thread.join
 	# print(stream)
-	print(waveform.shape)
-	print(sr)
 	print(pos)
 
 
@@ -310,6 +461,7 @@ def parse_args():
 	parser.add_argument("--path", default=None)
 	parser.add_argument("--gap", default=15)
 	parser.add_argument("--quality", default=99.5)
+	parser.add_argument("--padding", default=5000)
 	parser.add_argument("--quantity", default=None, type=int)
 	# parser.add_argument("--zipPath", default=None)
 	# parser.add_argument("--extractPath", default=None)
