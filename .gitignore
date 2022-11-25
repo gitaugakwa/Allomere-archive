@@ -1,0 +1,27 @@
+
+# Python
+venv
+__pycache__
+
+# Audio
+*.wav
+*.flac
+*.mp3
+*.part
+*.m3u8
+
+# Radio
+radio
+
+# Website
+node_modules
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Temp
+temp
+
+# Others
+model.*
+simple_audio.*
