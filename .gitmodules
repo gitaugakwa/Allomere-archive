@@ -1,0 +1,33 @@
+[submodule "Allomere/vendor/wxWidgets"]
+	path = Allomere/vendor/wxWidgets
+	url = https://github.com/wxWidgets/wxWidgets.git
+[submodule "Allomere/vendor/miniaudio"]
+	path = Allomere/vendor/miniaudio
+	url = https://github.com/mackron/miniaudio.git
+[submodule "Allomere/vendor/spdlog"]
+	path = Allomere/vendor/spdlog
+	url = https://github.com/gabime/spdlog
+[submodule "Allomere/vendor/imgui"]
+	path = Allomere/vendor/imgui
+	url = https://github.com/gitaugakwa/imgui
+[submodule "Allomere/vendor/json"]
+	path = Allomere/vendor/json
+	url = https://github.com/nlohmann/json
+[submodule "Allomere/vendor/glfw"]
+	path = Allomere/vendor/glfw
+	url = https://github.com/gitaugakwa/glfw
+[submodule "Allomere/vendor/glm"]
+	path = Allomere/vendor/glm
+	url = https://github.com/g-truc/glm
+[submodule "Allomere/vendor/aubio"]
+	path = Allomere/vendor/aubio
+	url = https://github.com/gitaugakwa/aubio
+[submodule "allomere/vendor/eigen"]
+	path = allomere/vendor/eigen
+	url = https://gitlab.com/libeigen/eigen
+[submodule "Allomere/vendor/essentia"]
+	path = Allomere/vendor/essentia
+	url = https://github.com/gitaugakwa/essentia
+[submodule "Allomere/vendor/implot"]
+	path = Allomere/vendor/implot
+	url = https://github.com/gitaugakwa/implot

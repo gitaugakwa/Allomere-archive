@@ -1,4 +1,5 @@
 
+
 # Python
 venv
 __pycache__
@@ -22,6 +23,18 @@ node_modules
 # Temp
 temp
 
+# Build
+bin
+bin-int
+
 # Others
 model.*
 simple_audio.*
+vcpkg_installed
+
+.vs/
+.vscode/
+
+*.sln
+*.vcxproj
+*.vcxproj.*
